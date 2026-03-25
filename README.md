@@ -18,13 +18,21 @@ The data is messy in the way real transactional data tends to be. Missing delive
 
 I used **Python** (pandas, matplotlib, seaborn) for the bulk of the analysis because I needed to merge three tables, handle missing values, and create calculated fields like delivery latency and order completion flags. I wrote **SQL** queries first to explore the data quickly and test hypotheses before committing to the full Python pipeline. The final dashboard export is formatted for **Power BI**, and I did initial data profiling in **Excel** to get a feel for distributions before writing any code.
 
-## What I expected to find
+## My hypotheses going in
 
-My working hypothesis was that the checkout flow was the primary bottleneck. I assumed drop-offs would be spread fairly evenly across the funnel, with maybe a spike at the shipping cost reveal or at the final confirmation step. That's the standard e-commerce narrative.
+Before touching the data, I wrote down three assumptions I expected the analysis to confirm:
+
+**Hypothesis 1:** The checkout flow is the primary bottleneck, with drop offs spread across multiple stages.
+
+**Hypothesis 2:** Higher value orders would have higher abandonment rates (price shock effect).
+
+**Hypothesis 3:** Geographic differences in delivery time would be the main driver of cancellations.
+
+All three turned out to be wrong. That's what made this analysis worth doing.
 
 ## What I actually found
 
-### The checkout flow isn't the problem. One payment method is.
+### Finding 1: The checkout flow isn't the problem. One payment method is.
 
 When I broke down order completion rates by payment type, the pattern was immediately obvious:
 
@@ -41,19 +49,21 @@ The completion rate for boleto is 25 percentage points lower than credit card. B
 
 ![Payment method completion rates](visualisations/01_payment_completion_rates.png)
 
-### This is costing R$380,000 in lost revenue
+### Finding 2: This is costing R$380,000 in lost revenue
 
 703 boleto orders failed during the analysis period. Total lost revenue: R$380,422. The average failed boleto order was worth R$541, so these aren't trivial transactions being abandoned.
 
 A conservative 30% recovery rate would bring back R$114,127. To put that in context, recovering existing failed orders is almost certainly cheaper than acquiring equivalent revenue through new customer acquisition.
 
-### The funnel tells a clear story when you look at it properly
+### Finding 3: The order funnel tells a clear story when you look at it properly
 
 ![Order funnel](visualisations/02_order_funnel.png)
 
 The biggest single drop happens at the cancellation stage, where 7.7% of all orders are lost. When I filtered by payment type, boleto orders accounted for the overwhelming majority of those cancellations. The rest of the funnel (product availability, processing) loses a relatively small percentage.
 
-### Late deliveries are quietly damaging customer retention
+To quantify exactly where effort should go: **cancellation accounts for 63% of total funnel loss, product unavailability for 26%, and processing failures for 11%.** This is not a distributed problem. It's concentrated, which means it's fixable.
+
+### Finding 4: Late deliveries are quietly damaging customer retention
 
 This wasn't part of my original question, but it jumped out of the data. For orders that do complete successfully:
 
@@ -66,29 +76,52 @@ That's a 1.24 star drop. And roughly half of all deliveries are arriving late. T
 
 ![Delivery impact on reviews](visualisations/04_delivery_vs_reviews.png)
 
-## What I looked at beyond the headlines
+## Segmented analysis: testing whether the problem is uniform
 
-I didn't stop at the top-level numbers. I also checked:
+A top level finding is only useful if you know whether it applies universally or hides behind an average. I broke the data down three ways to check.
 
-**Geography.** The boleto failure rate varies by state, but the credit card vs boleto gap is consistent everywhere. In Paraná, the gap is 33.8 percentage points. In Rio Grande do Sul, it's 17.2. The problem is universal, not regional.
+### By geography
 
-**Time of day and day of week.** Boleto failure rates are slightly higher for orders placed on weekends (30.5% vs 27.1% on Wednesdays). My interpretation: weekend impulse purchases are more likely to cool off before the customer gets around to paying the bank slip.
+![Geographic segmentation](visualisations/06_geographic_segmentation.png)
 
-**Order value.** Failed and completed boleto orders have similar value distributions. High-value orders don't fail at notably different rates than low value ones. The payment friction affects everyone equally.
+The boleto failure rate varies by state, but the credit card vs boleto gap is consistent everywhere. In Paraná and Distrito Federal the gap reaches 34 percentage points. Even in Rio Grande do Sul, where boleto performs best, the gap is still 17 points. The problem is structural to the payment method, not specific to any region.
+
+### By time of day and day of week
+
+Boleto failure rates are slightly higher for orders placed on weekends (30.5% vs 27.1% on Wednesdays). My interpretation: weekend impulse purchases are more likely to cool off before the customer gets around to paying the bank slip. This suggests timing the reminder to arrive on Monday morning for weekend orders could be effective.
+
+### By order value
+
+Failed and completed boleto orders have similar value distributions. High value orders don't fail at notably different rates than low value ones. This disproves my second hypothesis (price shock effect) and confirms that payment friction affects everyone equally regardless of order size.
 
 ![Boleto deep dive](visualisations/03_boleto_deep_dive.png)
 
-## My recommendations
+## My recommendations, prioritised by effort and impact
 
-If I were presenting this to the product team, I'd make three specific proposals:
+If I were presenting this to the product team, I wouldn't just list suggestions. I'd rank them so the team knows what to do first, what to plan for later, and what to skip entirely.
 
-**Don't redesign checkout.** The data doesn't support it. The failure pattern is payment method specific, not checkout flow wide. A full checkout redesign would consume significant engineering time and wouldn't address the actual problem. I'd push back on this if it were already planned.
+![Prioritisation matrix](visualisations/05_prioritisation_matrix.png)
 
-**Implement boleto payment reminders.** An automated SMS and email reminder 24 hours before the boleto expires is the lowest effort, highest impact intervention. Based on similar implementations in Brazilian fintech, I'd estimate a 15 to 20% recovery rate on failed boleto orders.
+| Recommendation | Impact | Effort | Priority |
+|---------------|:------:|:------:|:--------:|
+| Boleto SMS and email reminders 24h before expiry | High | Low | Do first |
+| 3 to 5% discount for instant payment methods | High | Medium | Do second |
+| Delivery SLA improvement for northern states | Medium | High | Plan |
+| Checkout UX redesign | Low | High | Deprioritise |
 
-**Offer a small discount for instant payment methods.** A 3 to 5% discount for credit card or PIX would nudge some boleto users toward higher completion methods. Even shifting 10% of boleto users to credit cards would meaningfully reduce overall failure rates. The discount cost would be a fraction of the revenue currently being lost.
+**Why I'd deprioritise the checkout redesign:** The data shows the failure is payment method specific, not checkout flow wide. A redesign would consume significant engineering time without addressing the root cause. I'd push back on this if it were already in the roadmap.
 
-**Separately, fix delivery reliability.** This is a different workstream but equally important. A 1.24-star review drop for late deliveries is a retention problem that will compound over time. Northern states (Amazonas, Pará) should be prioritised since delivery delays there are the most severe.
+**Why boleto reminders should go first:** Lowest effort (an automated SMS and email sequence), highest expected impact (15 to 20% recovery based on similar fintech implementations), and directly addresses the root cause. Estimated revenue recovery: R$57,000 to R$76,000 annually.
+
+## How I'd validate these recommendations
+
+Recommendations without a testing plan are just opinions. Here's how I'd propose validating each one:
+
+**Experiment 1: Boleto reminder timing.** Run an A/B test with three groups. Group A receives a reminder 24 hours before boleto expiry. Group B receives it 48 hours before. Group C (control) receives no reminder. Primary metric: boleto completion rate. Sample size needed: roughly 500 boleto orders per group to detect a 5 percentage point improvement with 95% confidence. Estimated run time: 3 to 4 weeks.
+
+**Experiment 2: Payment method discount.** Test whether a 3% discount for credit card payment shifts boleto users. Show the discount on the payment selection page for 50% of users (treatment) vs no discount (control). Primary metric: share of orders using credit card. Secondary metric: overall completion rate. Watch out for: margin impact if the discount erodes profit without improving completion.
+
+**Experiment 3: Reminder content.** Once we know reminders work, test urgency framing ("your order expires tomorrow") vs incentive framing ("complete payment and get free shipping on your next order"). Primary metric: boleto conversion rate. This is a lower-priority experiment that only makes sense after Experiment 1 confirms the baseline impact.
 
 ## Where I'd take this with more data
 
@@ -96,11 +129,11 @@ This analysis has clear limits. Here's what I'd want to investigate next if I ha
 
 **Customer level cohort analysis.** Do repeat customers complete boleto orders at higher rates than first-time buyers? If so, the problem might partially resolve itself as the customer base matures.
 
-**Boleto payment timeline data.** If I could see when customers actually pay their boletos (day 1 vs day 3 vs never), I could find the optimal reminder timing instead of guessing at 24 hours.
+**Boleto payment timeline data.If I can see when customers actually pay their boletos (day 1 vs day 3 vs never), I can determine the optimal reminder timing instead of guessing at 24 hours.
 
-**A/B testing the discount.** What's the minimum discount percentage that meaningfully shifts payment method choice? 3%? 5%? 1%? The answer determines whether the economics work.
+**Session level data.** With clickstream data I could see whether boleto users browse differently (more price comparison, less decisive) which would help design better interventions.
 
-**Lifetime value by payment method.** Are credit card customers more valuable over their full relationship with the platform, or do they just complete individual orders more reliably?
+**Lifetime value by payment method.** Are credit card customers more valuable over their full relationship with the platform, or do they complete individual orders more reliably?
 
 ## Project structure
 
@@ -119,6 +152,8 @@ visualisations/
     02_order_funnel.png
     03_boleto_deep_dive.png
     04_delivery_vs_reviews.png
+    05_prioritisation_matrix.png
+    06_geographic_segmentation.png
 README.md
 ```
 
